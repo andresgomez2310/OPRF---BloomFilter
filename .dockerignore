@@ -1,0 +1,6 @@
+.git
+secrets
+data
+.scratch
+*.md
+docker-compose.yml

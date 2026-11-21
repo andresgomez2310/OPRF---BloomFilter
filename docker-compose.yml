@@ -1,0 +1,52 @@
+services:
+  admin:
+    build:
+      context: .
+      dockerfile: docker/admin.Dockerfile
+    volumes:
+      - ./secrets:/secrets
+      - ./data/filter:/data/filter
+      - ./data/corpus:/data/corpus:ro
+    environment:
+      - OPRF_SEED_FILE=/secrets/oprf-seed.hex
+      - SIGNING_SEED_FILE=/secrets/signing-seed.hex
+      - SIGNING_PUBLIC_FILE=/secrets/signing-public.hex
+    command: ["sleep", "infinity"]
+    restart: unless-stopped
+
+  servidor:
+    build:
+      context: .
+      dockerfile: docker/server.Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./secrets:/secrets:ro
+      - ./data/filter:/data/filter
+    environment:
+      - OPRF_SEED_FILE=/secrets/oprf-seed.hex
+      - FILTER_DIR=/data/filter
+    command:
+      - "-addr"
+      - ":8080"
+      - "-seed-file"
+      - "/secrets/oprf-seed.hex"
+      - "-filter-dir"
+      - "/data/filter"
+    depends_on:
+      - admin
+    restart: unless-stopped
+
+  cliente:
+    build:
+      context: .
+      dockerfile: docker/client.Dockerfile
+    depends_on:
+      - servidor
+    environment:
+      - SERVER_URL=http://servidor:8080
+      - SIGNING_PUBLIC_FILE=/secrets/signing-public.hex
+    volumes:
+      - ./secrets:/secrets:ro
+    command: ["sleep", "infinity"]
+    restart: unless-stopped

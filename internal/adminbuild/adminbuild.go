@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
+	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -44,6 +45,7 @@ type Manifest struct {
 type BuildConfig struct {
 	CorpusPath     string
 	SeedPath       string
+	SeedBytes      []byte 
 	KeyInfo        []byte
 	SigningKeyPath string
 	KeyEpoch       string
@@ -67,19 +69,37 @@ func ReadHexFile(path string, expectedBytes int) ([]byte, error) {
 
 func Build(cfg BuildConfig) (Manifest, error) {
 	var zero Manifest
-	if cfg.CorpusPath == "" || cfg.SeedPath == "" || cfg.SigningKeyPath == "" || cfg.OutputDir == "" || cfg.KeyEpoch == "" {
-		return zero, errors.New("corpus, seed, signing key, epoch and output directory are required")
+	if cfg.CorpusPath == "" || cfg.SigningKeyPath == "" || cfg.OutputDir == "" || cfg.KeyEpoch == "" {
+		return zero, errors.New("corpus, signing key, epoch and output directory are required")
 	}
+	if cfg.SeedPath == "" && cfg.SeedBytes == nil {
+		return zero, errors.New("SeedPath or SeedBytes is required")
+	}
+	if cfg.SeedPath != "" && cfg.SeedBytes != nil {
+		return zero, errors.New("SeedPath and SeedBytes are mutually exclusive")
+	}
+	
 	if cfg.TargetFPP == 0 {
 		cfg.TargetFPP = DefaultFPP
 	}
 	if cfg.Now.IsZero() {
 		cfg.Now = time.Now().UTC()
 	}
-	seed, err := ReadHexFile(cfg.SeedPath, 32)
-	if err != nil {
-		return zero, fmt.Errorf("OPRF seed: %w", err)
+	
+	var seed []byte
+	if cfg.SeedBytes != nil {
+		if len(cfg.SeedBytes) != 32 {
+			return zero, errors.New("SeedBytes must be 32 bytes")
+		}
+		seed = cfg.SeedBytes
+	} else {
+		var err error
+		seed, err = ReadHexFile(cfg.SeedPath, 32)
+		if err != nil {
+			return zero, fmt.Errorf("OPRF seed: %w", err)
+		}
 	}
+
 	signingSeed, err := ReadHexFile(cfg.SigningKeyPath, ed25519.SeedSize)
 	if err != nil {
 		return zero, fmt.Errorf("signing seed: %w", err)
@@ -267,6 +287,98 @@ func writeAtomic(path string, data []byte, mode os.FileMode) error {
 	// Windows requires removing a preexisting destination before rename.
 	if err := os.Rename(f.Name(), path); err != nil {
 		if removeErr := os.Remove(path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			return err
+		}
+		return os.Rename(f.Name(), path)
+	}
+	return nil
+}
+
+type RotateConfig struct {
+	CorpusPath     string
+	SeedPath       string // se sobrescribe con la semilla nueva
+	KeyInfo        []byte
+	SigningKeyPath string
+	TargetFPP      float64
+	OutputDir      string
+	PublishDir     string
+	PublicKey      ed25519.PublicKey
+	Now            time.Time
+}
+
+// Rotate genera una semilla nueva, construye un filtro con época nueva y,
+// opcionalmente, lo publica. La semilla nueva se escribe al final.
+func Rotate(cfg RotateConfig) (Manifest, error) {
+	var zero Manifest
+	if cfg.CorpusPath == "" || cfg.SeedPath == "" || cfg.SigningKeyPath == "" || cfg.OutputDir == "" {
+		return zero, errors.New("corpus, seed, signing key and output directory are required")
+	}
+	if cfg.TargetFPP == 0 {
+		cfg.TargetFPP = DefaultFPP
+	}
+	if cfg.Now.IsZero() {
+		cfg.Now = time.Now().UTC()
+	}
+
+	seed := make([]byte, 32)
+	if _, err := rand.Read(seed); err != nil {
+		return zero, err
+	}
+	epoch := cfg.Now.UTC().Format(time.RFC3339)
+
+	m, err := Build(BuildConfig{
+		CorpusPath:     cfg.CorpusPath,
+		SeedBytes:      seed,
+		KeyInfo:        cfg.KeyInfo,
+		SigningKeyPath: cfg.SigningKeyPath,
+		KeyEpoch:       epoch,
+		TargetFPP:      cfg.TargetFPP,
+		OutputDir:      cfg.OutputDir,
+		Now:            cfg.Now,
+	})
+	if err != nil {
+		return zero, err
+	}
+
+	if cfg.PublishDir != "" {
+		if cfg.PublicKey == nil {
+			return zero, errors.New("PublishDir requires PublicKey")
+		}
+		if err := Publish(cfg.OutputDir, cfg.PublishDir, cfg.PublicKey); err != nil {
+			return zero, err
+		}
+	}
+
+	if err := writeHexAtomic(cfg.SeedPath, seed, 0600); err != nil {
+		return zero, err
+	}
+	return m, nil
+}
+
+func writeHexAtomic(path string, data []byte, mode os.FileMode) error {
+	dir := filepath.Dir(path)
+	f, err := os.CreateTemp(dir, ".tmp-seed-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if err := f.Chmod(mode); err != nil {
+		f.Close()
+		return err
+	}
+	if _, err := f.WriteString(hex.EncodeToString(data) + "\n"); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(f.Name(), path); err != nil {
+		if rmErr := os.Remove(path); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
 			return err
 		}
 		return os.Rename(f.Name(), path)

@@ -24,7 +24,8 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: admin init-test-keys|build-filter|publish [options]")
+		// 1. Actualizamos el mensaje de uso para incluir rotate-key
+		return fmt.Errorf("usage: admin init-test-keys|build-filter|rotate-key|publish [options]")
 	}
 	switch args[0] {
 	case "init-test-keys":
@@ -95,6 +96,48 @@ func run(args []string) error {
 		}
 		fmt.Println(string(result))
 		return nil
+	// 2. Añadimos el nuevo comando rotate-key aquí
+	case "rotate-key":
+		f := flag.NewFlagSet("rotate-key", flag.ContinueOnError)
+		corpus := f.String("corpus", "", "text corpus: one password per line")
+		seedFile := f.String("seed-file", "", "OPRF seed file (overwritten with new seed)")
+		keyInfo := f.String("key-info", "", "OPRF DeriveKey info (must match server)")
+		sign := f.String("signing-seed-file", "", "institutional Ed25519 seed as hex")
+		fpp := f.Float64("fpp", adminbuild.DefaultFPP, "target false-positive probability")
+		out := f.String("out", "", "output directory for the new artifacts")
+		publishDir := f.String("publish-to", "", "optional publish directory")
+		publicKeyFile := f.String("public-key-file", "", "institutional public key for publish verification")
+		if err := f.Parse(args[1:]); err != nil {
+			return err
+		}
+		var publicKey ed25519.PublicKey
+		if *publishDir != "" {
+			pk, err := adminbuild.ReadHexFile(*publicKeyFile, ed25519.PublicKeySize)
+			if err != nil {
+				return err
+			}
+			publicKey = ed25519.PublicKey(pk)
+		}
+		m, err := adminbuild.Rotate(adminbuild.RotateConfig{
+			CorpusPath:     *corpus,
+			SeedPath:       *seedFile,
+			KeyInfo:        []byte(*keyInfo),
+			SigningKeyPath: *sign,
+			TargetFPP:      *fpp,
+			OutputDir:      *out,
+			PublishDir:     *publishDir,
+			PublicKey:      publicKey,
+			Now:            time.Now().UTC(),
+		})
+		if err != nil {
+			return err
+		}
+		result, err := json.MarshalIndent(m, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(result))
+		return nil
 	case "publish":
 		f := flag.NewFlagSet("publish", flag.ContinueOnError)
 		source := f.String("from", "", "signed artifact directory")
@@ -113,6 +156,7 @@ func run(args []string) error {
 		fmt.Println("published manifest.json and bloom.bin in", *to)
 		return nil
 	default:
-		return fmt.Errorf("unknown command %q: use build-filter or publish", args[0])
+		// 3. Actualizamos el mensaje de error por defecto
+		return fmt.Errorf("unknown command %q: use init-test-keys, build-filter, rotate-key or publish", args[0])
 	}
 }

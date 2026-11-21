@@ -212,3 +212,38 @@ func TestOneHundredThousandEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRotateChangesSeedAndEpoch(t *testing.T) {
+	cfg, pub := fixture(t, "alpha\nbeta\n")
+	if _, err := Build(cfg); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(cfg.SeedPath)
+
+	rotatedOut := filepath.Join(t.TempDir(), "rotated")
+	m, err := Rotate(RotateConfig{
+		CorpusPath:     cfg.CorpusPath,
+		SeedPath:       cfg.SeedPath,
+		SigningKeyPath: cfg.SigningKeyPath,
+		TargetFPP:      cfg.TargetFPP,
+		OutputDir:      rotatedOut,
+		PublishDir:     filepath.Join(t.TempDir(), "published"),
+		PublicKey:      pub,
+		Now:            cfg.Now.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.ReadFile(cfg.SeedPath)
+	if bytes.Equal(before, after) {
+		t.Fatal("seed did not change")
+	}
+	manifestBytes, _ := os.ReadFile(filepath.Join(rotatedOut, "manifest.json"))
+	bloomBytes, _ := os.ReadFile(filepath.Join(rotatedOut, "bloom.bin"))
+	if _, err := Verify(manifestBytes, bloomBytes, pub); err != nil {
+		t.Fatal(err)
+	}
+	if m.KeyEpoch == "" {
+		t.Fatal("epoch empty")
+	}
+}

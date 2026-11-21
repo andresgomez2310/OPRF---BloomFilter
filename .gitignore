@@ -1,1 +1,26 @@
-/.gotmp
+# Claves y secretos (¡CRÍTICO! Nunca subir esto)
+/secrets/
+*.hex
+
+# Corpus de prueba y filtros generados
+/data/
+
+# Binarios compilados (Go)
+/admin
+/admin.exe
+/server
+/server.exe
+/client
+/client.exe
+*.exe
+*.out
+
+# Archivos temporales
+/.gotmp/
+/tmp/
+*.log
+
+# Configuración del editor
+.vscode/
+.idea/
+.DS_Store

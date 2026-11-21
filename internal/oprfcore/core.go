@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/cloudflare/circl/group" // <-- El import que faltaba
 	"github.com/cloudflare/circl/oprf"
 )
 
@@ -18,7 +19,8 @@ const (
 var (
 	suite = oprf.SuiteRistretto255
 
-	ErrNilServerKey = errors.New("oprfcore: nil server key")
+	ErrNilServerKey    = errors.New("oprfcore: nil server key")
+	ErrIdentityElement = errors.New("oprfcore: identity element") // <-- Añadido
 )
 
 type ServerKey struct {
@@ -61,7 +63,6 @@ func (k *ServerKey) MarshalBinary() ([]byte, error) {
 }
 
 // Evaluate realiza la evaluación OPRF sin cegado.
-
 func Evaluate(
 	key *ServerKey,
 	inputBytes []byte,
@@ -93,4 +94,39 @@ func Evaluate(
 	}
 
 	return output, nil
+}
+
+// EvaluateBlinded evalúa un elemento cegado de 32 bytes y devuelve el
+// elemento evaluado. Rechaza el elemento identidad y bytes que no
+// deserializan.
+func EvaluateBlinded(key *ServerKey, blindedElement []byte) ([]byte, error) {
+	if key == nil || key.inner == nil {
+		return nil, ErrNilServerKey
+	}
+
+	element := suite.Group().NewElement()
+	if err := element.UnmarshalBinary(blindedElement); err != nil {
+		return nil, fmt.Errorf("oprfcore: invalid blinded element: %w", err)
+	}
+	if element.IsIdentity() {
+		return nil, ErrIdentityElement
+	}
+
+	server := oprf.NewServer(suite, key.inner)
+	request := &oprf.EvaluationRequest{
+		Elements: []group.Element{element}, // <-- Corregido aquí
+	}
+	evaluation, err := server.Evaluate(request)
+	if err != nil {
+		return nil, fmt.Errorf("oprfcore: evaluate blinded: %w", err)
+	}
+	if len(evaluation.Elements) != 1 {
+		return nil, errors.New("oprfcore: unexpected evaluated element count")
+	}
+
+	result, err := evaluation.Elements[0].MarshalBinaryCompress()
+	if err != nil {
+		return nil, fmt.Errorf("oprfcore: marshal evaluated element: %w", err)
+	}
+	return result, nil
 }
