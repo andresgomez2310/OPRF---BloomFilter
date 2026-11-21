@@ -6,6 +6,7 @@ package client
 import (
 	"bufio"
 	"bytes"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -39,6 +40,8 @@ type Config struct {
 	ServerURL string
 	CacheDir  string
 	HTTP      *http.Client
+	// TrustedSigningKey is the institutional Ed25519 public key, provisioned out of band.
+	TrustedSigningKey ed25519.PublicKey
 }
 
 // Outcome is a verdict for one password. Verdict is empty when the check aborts.
@@ -83,6 +86,9 @@ func ReadPassword(r io.Reader, prompt io.Writer, interactive bool) (string, erro
 func Consult(password string, cfg Config) (Outcome, error) {
 	if cfg.ServerURL == "" || cfg.CacheDir == "" {
 		return Outcome{}, errors.New("client: server URL and cache directory are required")
+	}
+	if len(cfg.TrustedSigningKey) != ed25519.PublicKeySize {
+		return Outcome{}, errors.New("client: trusted Ed25519 public key is required")
 	}
 	input, err := canonical.PasswordBytes(password)
 	if err != nil {
@@ -146,29 +152,40 @@ func announcedEpoch(cfg Config) (string, error) {
 // filterForEpoch returns the cached filter when it belongs to epoch.
 // Any other cache is removed before the new manifest and bloom.bin are downloaded.
 func filterForEpoch(cfg Config, epoch string) (*bloom.Filter, error) {
-	if filter, ok := cachedFilter(cfg.CacheDir, epoch); ok {
-		return filter, nil
+	var newManifest []byte
+	if filter, cachedManifest, ok := cachedFilter(cfg.CacheDir, epoch, cfg.TrustedSigningKey); ok {
+		etag := sha256.Sum256(cachedManifest)
+		status, body, err := httpGetManifest(cfg, `"`+hex.EncodeToString(etag[:])+`"`)
+		if err != nil {
+			return nil, err
+		}
+		if status == http.StatusNotModified {
+			return filter, nil
+		}
+		newManifest = body
+		// A changed manifest must be revalidated with the newly published filter.
 	}
 	if err := discardCache(cfg.CacheDir); err != nil {
 		return nil, err
 	}
-	manifestBytes, err := httpDo(cfg, http.MethodGet, "/v1/filter/manifest", nil)
-	if err != nil {
-		return nil, err
+	manifestBytes := newManifest
+	if manifestBytes == nil {
+		_, body, err := httpGetManifest(cfg, "")
+		if err != nil {
+			return nil, err
+		}
+		manifestBytes = body
 	}
 	vector, err := httpDo(cfg, http.MethodGet, "/v1/filter/bloom", nil)
 	if err != nil {
 		return nil, err
 	}
-	var manifest adminbuild.Manifest
-	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
-		return nil, err
+	manifest, err := adminbuild.Verify(manifestBytes, vector, cfg.TrustedSigningKey)
+	if err != nil {
+		return nil, fmt.Errorf("client: rejected published filter: %w", err)
 	}
 	if manifest.KeyEpoch != epoch {
 		return nil, ErrEpochMismatch
-	}
-	if err := digestMatches(manifest, vector); err != nil {
-		return nil, err
 	}
 	filter, err := bloom.FromBytes(manifest.Parameters.MBits, manifest.Parameters.KHashes, vector)
 	if err != nil {
@@ -187,27 +204,53 @@ func filterForEpoch(cfg Config, epoch string) (*bloom.Filter, error) {
 	return filter, nil
 }
 
-func cachedFilter(cacheDir, epoch string) (*bloom.Filter, bool) {
+func cachedFilter(cacheDir, epoch string, publicKey ed25519.PublicKey) (*bloom.Filter, []byte, bool) {
 	manifestBytes, err := os.ReadFile(filepath.Join(cacheDir, "manifest.json"))
 	if err != nil {
-		return nil, false
+		return nil, nil, false
 	}
 	vector, err := os.ReadFile(filepath.Join(cacheDir, "bloom.bin"))
 	if err != nil {
-		return nil, false
+		return nil, nil, false
 	}
-	var manifest adminbuild.Manifest
-	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
-		return nil, false
-	}
-	if manifest.KeyEpoch != epoch || digestMatches(manifest, vector) != nil {
-		return nil, false
+	manifest, err := adminbuild.Verify(manifestBytes, vector, publicKey)
+	if err != nil || manifest.KeyEpoch != epoch || manifest.SuiteID != oprfcore.SuiteID {
+		return nil, nil, false
 	}
 	filter, err := bloom.FromBytes(manifest.Parameters.MBits, manifest.Parameters.KHashes, vector)
 	if err != nil {
-		return nil, false
+		return nil, nil, false
 	}
-	return filter, true
+	return filter, manifestBytes, true
+}
+
+// httpGetManifest supports conditional GET. A 304 is valid only when the
+// caller already has a verified cached manifest and filter.
+func httpGetManifest(cfg Config, etag string) (int, []byte, error) {
+	httpClient := cfg.HTTP
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 30 * time.Second}
+	}
+	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(cfg.ServerURL, "/")+"/v1/filter/manifest", nil)
+	if err != nil {
+		return 0, nil, err
+	}
+	if etag != "" {
+		req.Header.Set("If-None-Match", etag)
+	}
+	response, err := httpClient.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusNotModified && etag != "" {
+		return response.StatusCode, nil, nil
+	}
+	if response.StatusCode != http.StatusOK {
+		return 0, nil, fmt.Errorf("client: GET manifest: %s", response.Status)
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, 32<<20))
+	return response.StatusCode, data, err
 }
 
 func digestMatches(manifest adminbuild.Manifest, vector []byte) error {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"encoding/hex"
 	"net/http/httptest"
 	"os"
@@ -54,7 +55,12 @@ func TestCLIReadsPasswordFromStdin(t *testing.T) {
 	t.Cleanup(httpServer.Close)
 
 	cache := filepath.Join(dir, "cache")
-	args := []string{"-server", httpServer.URL, "-cache", cache}
+	publicKeyFile := filepath.Join(dir, "signing-public.hex")
+	publicKey := ed25519.NewKeyFromSeed(signingSeed).Public().(ed25519.PublicKey)
+	if err := os.WriteFile(publicKeyFile, []byte(hex.EncodeToString(publicKey)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"-server", httpServer.URL, "-cache", cache, "-signing-public-file", publicKeyFile}
 	for _, arg := range args {
 		if strings.Contains(arg, password) || strings.Contains(arg, "oprf.hex") {
 			t.Fatal("password or server key was passed to the client")
