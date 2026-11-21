@@ -2,12 +2,16 @@ package client_test
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"encoding/hex"
-	"errors"
+	"encoding/json"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,45 +20,87 @@ import (
 	"github.com/andresgomez2310/OPRF---BloomFilter/internal/canonical"
 	"github.com/andresgomez2310/OPRF---BloomFilter/internal/client"
 	"github.com/andresgomez2310/OPRF---BloomFilter/internal/oprfcore"
+	"github.com/andresgomez2310/OPRF---BloomFilter/internal/oprfserver"
 )
 
-func publish(t *testing.T, corpus, epoch string, fpp float64) (*oprfcore.ServerKey, string) {
+// published runs the OPRF server with skS. The client config only receives the URL and a cache directory.
+type published struct {
+	cfg       client.Config
+	dir       string
+	filterDir string
+	seedPath  string
+	signPath  string
+	corpus    string
+	epoch     string
+	key       *oprfcore.ServerKey
+	bloomGets int
+	failBloom bool
+	mu        sync.Mutex
+}
+
+func publish(t *testing.T, corpus, epoch string, fpp float64) *published {
 	t.Helper()
 	dir := t.TempDir()
 	seed := bytes.Repeat([]byte{0x12}, 32)
 	signingSeed := bytes.Repeat([]byte{0x45}, 32)
-	if err := os.WriteFile(filepath.Join(dir, "oprf.hex"), []byte(hex.EncodeToString(seed)), 0600); err != nil {
+	seedPath := filepath.Join(dir, "oprf.hex")
+	signPath := filepath.Join(dir, "signing.hex")
+	if err := os.WriteFile(seedPath, []byte(hex.EncodeToString(seed)), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "signing.hex"), []byte(hex.EncodeToString(signingSeed)), 0600); err != nil {
+	if err := os.WriteFile(signPath, []byte(hex.EncodeToString(signingSeed)), 0600); err != nil {
 		t.Fatal(err)
 	}
 	corpusPath := filepath.Join(dir, "corpus.txt")
 	if err := os.WriteFile(corpusPath, []byte(corpus), 0600); err != nil {
 		t.Fatal(err)
 	}
-	out := filepath.Join(dir, "published")
-	_, err := adminbuild.Build(adminbuild.BuildConfig{
+	filterDir := filepath.Join(dir, "published")
+	if _, err := adminbuild.Build(adminbuild.BuildConfig{
 		CorpusPath:     corpusPath,
-		SeedPath:       filepath.Join(dir, "oprf.hex"),
-		KeyInfo:        []byte("epoca-prueba"),
-		SigningKeyPath: filepath.Join(dir, "signing.hex"),
+		SeedPath:       seedPath,
+		SigningKeyPath: signPath,
 		KeyEpoch:       epoch,
 		TargetFPP:      fpp,
-		OutputDir:      out,
+		OutputDir:      filterDir,
 		Now:            time.Date(2026, 11, 13, 16, 0, 0, 0, time.UTC),
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	key, err := oprfcore.DeriveServerKey(seed, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, err := oprfcore.DeriveServerKey(seed, []byte("epoca-prueba"))
+	server, err := oprfserver.New(oprfserver.Config{SeedPath: seedPath, FilterDir: filterDir})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(out, "manifest.json")); err != nil {
-		t.Fatal(err)
+	p := &published{
+		dir: dir, filterDir: filterDir, seedPath: seedPath, signPath: signPath,
+		corpus: corpusPath, epoch: epoch, key: key,
 	}
-	return key, out
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/filter/bloom" {
+			p.mu.Lock()
+			p.bloomGets++
+			fail := p.failBloom
+			p.mu.Unlock()
+			if fail {
+				http.Error(w, "bloom unavailable", http.StatusServiceUnavailable)
+				return
+			}
+		}
+		server.Handler().ServeHTTP(w, r)
+	}))
+	t.Cleanup(httpServer.Close)
+	p.cfg = client.Config{ServerURL: httpServer.URL, CacheDir: filepath.Join(dir, "cache")}
+	return p
+}
+
+func (p *published) bloomDownloads() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.bloomGets
 }
 
 func TestPresentPasswordIsCompromised(t *testing.T) {
@@ -62,8 +108,8 @@ func TestPresentPasswordIsCompromised(t *testing.T) {
 		epoch    = "2026-11-13T16:00:00Z"
 		password = "clave-presente"
 	)
-	key, dir := publish(t, password+"\n", epoch, 1e-12)
-	got, err := client.Consult(password, key, epoch, dir)
+	p := publish(t, password+"\n", epoch, 1e-12)
+	got, err := client.Consult(password, p.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +123,7 @@ func TestPresentPasswordIsCompromised(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	direct, err := oprfcore.Evaluate(key, input)
+	direct, err := oprfcore.Evaluate(p.key, input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,8 +134,39 @@ func TestPresentPasswordIsCompromised(t *testing.T) {
 
 func TestAbsentPasswordIsNotInThePublishedSet(t *testing.T) {
 	const epoch = "2026-11-13T16:00:00Z"
-	key, dir := publish(t, "clave-presente\n", epoch, 1e-12)
-	got, err := client.Consult("clave-ausente", key, epoch, dir)
+	p := publish(t, "clave-presente\n", epoch, 1e-12)
+	input, err := canonical.PasswordBytes("clave-ausente")
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := oprfcore.Evaluate(p.key, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vector, err := os.ReadFile(filepath.Join(p.filterDir, "bloom.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestBytes, err := os.ReadFile(filepath.Join(p.filterDir, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest adminbuild.Manifest
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	filter, err := bloom.FromBytes(manifest.Parameters.MBits, manifest.Parameters.KHashes, vector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	present, err := filter.Contains(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if present {
+		t.Fatal("fixture password is not absent from the published filter")
+	}
+	got, err := client.Consult("clave-ausente", p.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,12 +187,12 @@ func TestRepeatedQueryKeepsVerdictAndChangesBlind(t *testing.T) {
 		epoch    = "2026-11-13T16:00:00Z"
 		password = "clave-presente"
 	)
-	key, dir := publish(t, password+"\n", epoch, 1e-12)
-	first, err := client.Consult(password, key, epoch, dir)
+	p := publish(t, password+"\n", epoch, 1e-12)
+	first, err := client.Consult(password, p.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := client.Consult(password, key, epoch, dir)
+	second, err := client.Consult(password, p.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,16 +205,118 @@ func TestRepeatedQueryKeepsVerdictAndChangesBlind(t *testing.T) {
 	if !bytes.Equal(first.Output, second.Output) {
 		t.Fatal("repeated queries changed the OPRF output")
 	}
+	if p.bloomDownloads() != 1 {
+		t.Fatalf("cached epoch downloaded bloom.bin %d times", p.bloomDownloads())
+	}
 }
 
-func TestEpochMismatchEmitsNoVerdict(t *testing.T) {
-	key, dir := publish(t, "clave-presente\n", "2026-11-13T16:00:00Z", 1e-12)
-	got, err := client.Consult("clave-presente", key, "2026-11-13T17:00:00Z", dir)
-	if !errors.Is(err, client.ErrEpochMismatch) {
-		t.Fatalf("got %v", err)
+func TestRotationRefreshesFilterBeforeVerdict(t *testing.T) {
+	const password = "clave-presente"
+	p := publish(t, password+"\n", "2026-11-13T16:00:00Z", 1e-12)
+	first, err := client.Consult(password, p.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Verdict != client.VerdictCompromised {
+		t.Fatalf("verdict %q", first.Verdict)
+	}
+	oldBloom, err := os.ReadFile(filepath.Join(p.cfg.CacheDir, "bloom.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	signingSeed, err := adminbuild.ReadHexFile(p.signPath, ed25519.SeedSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	public := ed25519.NewKeyFromSeed(signingSeed).Public().(ed25519.PublicKey)
+	rotated, err := adminbuild.Rotate(adminbuild.RotateConfig{
+		CorpusPath:     p.corpus,
+		SeedPath:       p.seedPath,
+		SigningKeyPath: p.signPath,
+		TargetFPP:      1e-12,
+		OutputDir:      filepath.Join(p.dir, "rotated"),
+		PublishDir:     p.filterDir,
+		PublicKey:      public,
+		Now:            time.Date(2026, 11, 13, 17, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := client.Consult(password, p.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Verdict != client.VerdictCompromised {
+		t.Fatalf("verdict after rotation %q", second.Verdict)
+	}
+	if p.bloomDownloads() != 2 {
+		t.Fatalf("rotation downloaded bloom.bin %d times", p.bloomDownloads())
+	}
+	cachedManifest, err := os.ReadFile(filepath.Join(p.cfg.CacheDir, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest adminbuild.Manifest
+	if err := json.Unmarshal(cachedManifest, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.KeyEpoch != rotated.KeyEpoch {
+		t.Fatalf("cache epoch %q, rotated epoch %q", manifest.KeyEpoch, rotated.KeyEpoch)
+	}
+	cachedBloom, err := os.ReadFile(filepath.Join(p.cfg.CacheDir, "bloom.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	publishedBloom, err := os.ReadFile(filepath.Join(p.filterDir, "bloom.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(cachedBloom, publishedBloom) {
+		t.Fatal("cache kept a filter other than the published one")
+	}
+	if bytes.Equal(cachedBloom, oldBloom) {
+		t.Fatal("verdict used the filter from the previous epoch")
+	}
+}
+
+func TestStaleCacheDoesNotVerdictWhenRefreshFails(t *testing.T) {
+	const password = "clave-presente"
+	p := publish(t, password+"\n", "2026-11-13T16:00:00Z", 1e-12)
+	if _, err := client.Consult(password, p.cfg); err != nil {
+		t.Fatal(err)
+	}
+	signingSeed, err := adminbuild.ReadHexFile(p.signPath, ed25519.SeedSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	public := ed25519.NewKeyFromSeed(signingSeed).Public().(ed25519.PublicKey)
+	if _, err := adminbuild.Rotate(adminbuild.RotateConfig{
+		CorpusPath:     p.corpus,
+		SeedPath:       p.seedPath,
+		SigningKeyPath: p.signPath,
+		TargetFPP:      1e-12,
+		OutputDir:      filepath.Join(p.dir, "rotated"),
+		PublishDir:     p.filterDir,
+		PublicKey:      public,
+		Now:            time.Date(2026, 11, 13, 18, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	p.mu.Lock()
+	p.failBloom = true
+	p.mu.Unlock()
+
+	got, err := client.Consult(password, p.cfg)
+	if err == nil {
+		t.Fatal("stale cache produced a verdict without the new filter")
 	}
 	if got.Verdict != "" || got.Format() != "" {
-		t.Fatalf("epoch mismatch produced a verdict: %#v", got)
+		t.Fatalf("failed refresh produced a verdict: %#v", got)
+	}
+	if _, statErr := os.Stat(filepath.Join(p.cfg.CacheDir, "manifest.json")); !os.IsNotExist(statErr) {
+		t.Fatal("previous epoch remained cached after the refresh failed")
 	}
 }
 

@@ -8,7 +8,7 @@ Sistema de verificación privada de contraseñas comprometidas utilizando OPRF y
 | -------------- | -------- | ------------- | ------ |
 | Administrador  | `admin`  | `cmd/admin`   | 01–03, 06, 09 |
 | Servidor OPRF  | `server` | `cmd/server`  | 05     |
-| Cliente        | `client` | `cmd/client`  | 07     |
+| Cliente        | `cliente` | `cmd/cliente` | 04, 07, 09 |
 
 - **Go:** `1.27.4` (ver `go.mod`)
 - **Librería:** `github.com/cloudflare/circl` `v1.6.5`
@@ -17,7 +17,7 @@ Sistema de verificación privada de contraseñas comprometidas utilizando OPRF y
 
 ## Docker Compose
 
-Todos los comandos están adaptados para ejecutarse en **Windows PowerShell**. La carpeta `secrets` está correctamente aislada y solo se monta en los contenedores `admin` y `servidor`.
+Todos los comandos están adaptados para ejecutarse en **Windows PowerShell**. La carpeta `secrets` se monta solo en `admin` y `servidor`. La imagen y el volumen de `cliente` no reciben `skS` ni el corpus.
 
 ### 1. Preparar directorios en el host
 ```powershell
@@ -77,3 +77,10 @@ docker compose exec admin admin rotate-key `
 curl.exe http://localhost:8080/v1/parameters
 ```
 *(El `key_epoch` ya no será `2026-Q1`, sino la fecha exacta del momento de la rotación. El servidor se actualiza sin reiniciarse).*
+
+### 9. Pedir un veredicto dentro de la red de Compose
+```powershell
+"hunter2" | docker compose exec -T cliente cliente
+"no-esta-en-el-corpus" | docker compose exec -T cliente cliente
+```
+La primera contraseña está en el corpus y responde `COMPROMETIDA`. La segunda no está y responde `NO ENCONTRADA EN LA LISTA`. El cliente descarga el filtro de la época anunciada en `/v1/parameters` y lo guarda en su caché. Si `rotate-key` publica otra época, la siguiente consulta descarta ese filtro y baja el nuevo antes de responder.

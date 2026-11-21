@@ -45,8 +45,11 @@ services:
       - servidor
     environment:
       - SERVER_URL=http://servidor:8080
-      - SIGNING_PUBLIC_FILE=/secrets/signing-public.hex
+      - CACHE_DIR=/var/cache/cliente
     volumes:
-      - ./secrets:/secrets:ro
+      - cliente-cache:/var/cache/cliente
     command: ["sleep", "infinity"]
     restart: unless-stopped
+
+volumes:
+  cliente-cache:

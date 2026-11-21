@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/hex"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/andresgomez2310/OPRF---BloomFilter/internal/adminbuild"
 	"github.com/andresgomez2310/OPRF---BloomFilter/internal/client"
+	"github.com/andresgomez2310/OPRF---BloomFilter/internal/oprfserver"
 )
 
 func TestCLIReadsPasswordFromStdin(t *testing.T) {
@@ -36,7 +38,6 @@ func TestCLIReadsPasswordFromStdin(t *testing.T) {
 	if _, err := adminbuild.Build(adminbuild.BuildConfig{
 		CorpusPath:     corpusPath,
 		SeedPath:       seedPath,
-		KeyInfo:        []byte("epoca-prueba"),
 		SigningKeyPath: filepath.Join(dir, "signing.hex"),
 		KeyEpoch:       epoch,
 		TargetFPP:      1e-12,
@@ -45,21 +46,23 @@ func TestCLIReadsPasswordFromStdin(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-
-	args := []string{
-		"-seed-file", seedPath,
-		"-key-info", "epoca-prueba",
-		"-epoch", epoch,
-		"-published", published,
+	server, err := oprfserver.New(oprfserver.Config{SeedPath: seedPath, FilterDir: published})
+	if err != nil {
+		t.Fatal(err)
 	}
+	httpServer := httptest.NewServer(server.Handler())
+	t.Cleanup(httpServer.Close)
+
+	cache := filepath.Join(dir, "cache")
+	args := []string{"-server", httpServer.URL, "-cache", cache}
 	for _, arg := range args {
-		if strings.Contains(arg, password) {
-			t.Fatal("password was passed as a process argument")
+		if strings.Contains(arg, password) || strings.Contains(arg, "oprf.hex") {
+			t.Fatal("password or server key was passed to the client")
 		}
 	}
 
 	var stdout, stderr bytes.Buffer
-	err := run(args, strings.NewReader(password+"\n"), &stdout, &stderr, false)
+	err = run(args, strings.NewReader(password+"\n"), &stdout, &stderr, false)
 	if err != nil {
 		t.Fatal(err)
 	}

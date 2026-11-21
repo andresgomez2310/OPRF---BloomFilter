@@ -2,6 +2,7 @@ package oprfserver_test
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -14,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cloudflare/circl/oprf"
 	"github.com/andresgomez2310/OPRF---BloomFilter/internal/adminbuild"
 	"github.com/andresgomez2310/OPRF---BloomFilter/internal/oprfserver"
+	"github.com/cloudflare/circl/oprf"
 )
 
 type harness struct {

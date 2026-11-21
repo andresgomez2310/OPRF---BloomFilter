@@ -10,10 +10,7 @@ import (
 
 const ElementSize = 32
 
-var (
-	ErrIdentityElement  = errors.New("oprfcore: identity element")
-	ErrMalformedElement = errors.New("oprfcore: malformed element")
-)
+var ErrMalformedElement = errors.New("oprfcore: malformed element")
 
 // Query is the client's blinded session. The scalar and the input bytes stay
 // inside FinalizeData; BlindedElement is the only value that would leave.

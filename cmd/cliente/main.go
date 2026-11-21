@@ -1,6 +1,5 @@
 // Command cliente reads one password from stdin and prints a verdict.
-// It evaluates the blinded element in-process with the same server key that
-// built the published filter. It does not open an HTTP listener.
+// It sends only a blinded element to the OPRF server. It does not read skS.
 package main
 
 import (
@@ -9,9 +8,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/andresgomez2310/OPRF---BloomFilter/internal/adminbuild"
 	"github.com/andresgomez2310/OPRF---BloomFilter/internal/client"
-	"github.com/andresgomez2310/OPRF---BloomFilter/internal/oprfcore"
 )
 
 func main() {
@@ -26,33 +23,26 @@ func main() {
 func run(args []string, in io.Reader, out, errOut io.Writer, interactive bool) error {
 	flags := flag.NewFlagSet("cliente", flag.ContinueOnError)
 	flags.SetOutput(errOut)
-	seedPath := flags.String("seed-file", "", "32-byte OPRF key derivation seed as hex")
-	keyInfo := flags.String("key-info", "", "OPRF DeriveKey info string used to build the filter")
-	epoch := flags.String("epoch", "", "epoch of the server key used for evaluation")
-	published := flags.String("published", "", "directory with manifest.json and bloom.bin")
+	server := flags.String("server", os.Getenv("SERVER_URL"), "OPRF server base URL")
+	cache := flags.String("cache", os.Getenv("CACHE_DIR"), "directory for the epoch's manifest and bloom.bin")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
 		return fmt.Errorf("the password is read from stdin, not from arguments")
 	}
-	if *seedPath == "" || *epoch == "" || *published == "" {
-		return fmt.Errorf("seed-file, epoch and published are required")
+	if *server == "" || *cache == "" {
+		return fmt.Errorf("server and cache are required")
 	}
 
 	password, err := client.ReadPassword(in, errOut, interactive)
 	if err != nil {
 		return err
 	}
-	seed, err := adminbuild.ReadHexFile(*seedPath, 32)
-	if err != nil {
-		return err
-	}
-	key, err := oprfcore.DeriveServerKey(seed, []byte(*keyInfo))
-	if err != nil {
-		return err
-	}
-	outcome, err := client.Consult(password, key, *epoch, *published)
+	outcome, err := client.Consult(password, client.Config{
+		ServerURL: *server,
+		CacheDir:  *cache,
+	})
 	if err != nil {
 		return err
 	}
