@@ -93,7 +93,7 @@ func publish(t *testing.T, corpus, epoch string, fpp float64) *published {
 		server.Handler().ServeHTTP(w, r)
 	}))
 	t.Cleanup(httpServer.Close)
-	p.cfg = client.Config{ServerURL: httpServer.URL, CacheDir: filepath.Join(dir, "cache")}
+	p.cfg = client.Config{ServerURL: httpServer.URL, CacheDir: filepath.Join(dir, "cache"), TrustedSigningKey: ed25519.NewKeyFromSeed(signingSeed).Public().(ed25519.PublicKey)}
 	return p
 }
 
@@ -101,6 +101,70 @@ func (p *published) bloomDownloads() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.bloomGets
+}
+
+func TestTicket08RejectsTamperedManifestAndWrongKey(t *testing.T) {
+	p := publish(t, "presente\n", "2026-11-13T16:00:00Z", .01)
+	manifestPath := filepath.Join(p.filterDir, "manifest.json")
+	original, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest adminbuild.Manifest
+	if err := json.Unmarshal(original, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	manifest.Signature = strings.Repeat("0", len(manifest.Signature))
+	tampered, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifestPath, tampered, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := client.Consult("presente", p.cfg); err == nil || result.Verdict != "" {
+		t.Fatal("accepted a forged manifest")
+	}
+	if err := os.WriteFile(manifestPath, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	p.cfg.TrustedSigningKey = ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x99}, 32)).Public().(ed25519.PublicKey)
+	if result, err := client.Consult("presente", p.cfg); err == nil || result.Verdict != "" {
+		t.Fatal("accepted a different signing key")
+	}
+}
+
+func TestTicket08RejectsTamperedFilterAndCache(t *testing.T) {
+	p := publish(t, "presente\n", "2026-11-13T16:00:00Z", .01)
+	path := filepath.Join(p.filterDir, "bloom.bin")
+	original, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tampered := append([]byte(nil), original...)
+	tampered[0] ^= 0x80
+	if err := os.WriteFile(path, tampered, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := client.Consult("presente", p.cfg); err == nil || result.Verdict != "" {
+		t.Fatal("accepted modified bloom")
+	}
+	if err := os.WriteFile(path, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Consult("presente", p.cfg); err != nil {
+		t.Fatal(err)
+	}
+	cacheManifest := filepath.Join(p.cfg.CacheDir, "manifest.json")
+	if err := os.WriteFile(cacheManifest, []byte(`{"key_epoch":"2026-11-13T16:00:00Z"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := client.Consult("presente", p.cfg); err != nil || result.Verdict != client.VerdictCompromised {
+		t.Fatalf("failed to refresh invalid cache: %v", err)
+	}
+	if p.bloomDownloads() < 3 {
+		t.Fatal("tampered cache was reused without redownload")
+	}
 }
 
 func TestPresentPasswordIsCompromised(t *testing.T) {
