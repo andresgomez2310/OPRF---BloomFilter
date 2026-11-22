@@ -42,6 +42,11 @@ type Config struct {
 	HTTP      *http.Client
 	// TrustedSigningKey is the institutional Ed25519 public key, provisioned out of band.
 	TrustedSigningKey ed25519.PublicKey
+	// Observadores opcionales
+	ObserveHTTP         func(time.Duration)
+	ObserveBlind        func(time.Duration)
+	ObserveUnblind      func(time.Duration)
+	ObserveFilterLookup func(time.Duration)
 }
 
 // Outcome is a verdict for one password. Verdict is empty when the check aborts.
@@ -80,9 +85,7 @@ func ReadPassword(r io.Reader, prompt io.Writer, interactive bool) (string, erro
 	return line, nil
 }
 
-// Consult blinds the password, asks the server to evaluate that element, and
-// looks the OPRF output up in the filter of the epoch the server is announcing.
-// A cached filter from another epoch is discarded before the lookup.
+// Consult blinds the password, asks the server to evaluate that element
 func Consult(password string, cfg Config) (Outcome, error) {
 	if cfg.ServerURL == "" || cfg.CacheDir == "" {
 		return Outcome{}, errors.New("client: server URL and cache directory are required")
@@ -94,7 +97,16 @@ func Consult(password string, cfg Config) (Outcome, error) {
 	if err != nil {
 		return Outcome{}, err
 	}
+	blindStart := time.Now()
+
 	query, err := oprfcore.Blind(input)
+
+	blindDuration := time.Since(blindStart)
+
+	if cfg.ObserveBlind != nil {
+		cfg.ObserveBlind(blindDuration)
+	}
+
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -129,7 +141,13 @@ func Consult(password string, cfg Config) (Outcome, error) {
 	if err != nil {
 		return Outcome{}, fmt.Errorf("client: evaluated element: %w", err)
 	}
-	return Complete(query, raw, filter)
+	return completeWithObservers(
+				query,
+				raw,
+				filter,
+				cfg.ObserveUnblind,
+				cfg.ObserveFilterLookup,
+			)
 }
 
 func announcedEpoch(cfg Config) (string, error) {
@@ -235,6 +253,13 @@ func httpGetManifest(cfg Config, etag string) (int, []byte, error) {
 	if err != nil {
 		return 0, nil, err
 	}
+	start := time.Now()
+
+	defer func() {
+		if cfg.ObserveHTTP != nil {
+			cfg.ObserveHTTP(time.Since(start))
+		}
+	}()
 	if etag != "" {
 		req.Header.Set("If-None-Match", etag)
 	}
@@ -283,6 +308,13 @@ func httpDo(cfg Config, method, path string, body []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	start := time.Now()
+
+	defer func() {
+		if cfg.ObserveHTTP != nil {
+			cfg.ObserveHTTP(time.Since(start))
+		}
+	}()
 	if body != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
@@ -304,23 +336,56 @@ func httpDo(cfg Config, method, path string, body []byte) ([]byte, error) {
 // Complete turns an evaluated element into a verdict. An invalid element
 // produces no verdict.
 func Complete(query *oprfcore.Query, evaluated []byte, filter *bloom.Filter) (Outcome, error) {
+	return completeWithObservers(query, evaluated, filter, nil, nil)
+}
+
+func completeWithObservers(
+	query *oprfcore.Query,
+	evaluated []byte,
+	filter *bloom.Filter,
+	observeUnblind func(time.Duration),
+	observeFilterLookup func(time.Duration),
+) (Outcome, error) {
+
+	unblindStart := time.Now()
+
 	output, err := query.Finalize(evaluated)
+
+	unblindDuration := time.Since(unblindStart)
+
+	if observeUnblind != nil {
+		observeUnblind(unblindDuration)
+	}
+
 	if err != nil {
 		return Outcome{}, err
 	}
+
+	filterStart := time.Now()
+
 	found, err := filter.Contains(output)
+
+	filterDuration := time.Since(filterStart)
+
+	if observeFilterLookup != nil {
+		observeFilterLookup(filterDuration)
+	}
+
 	if err != nil {
 		return Outcome{}, err
 	}
+
 	outcome := Outcome{
 		BlindedElement: query.BlindedElement(),
 		Output:         output,
 	}
+
 	if found {
 		outcome.Verdict = VerdictCompromised
 		outcome.Note = NoteFalsePositive
 		return outcome, nil
 	}
+
 	outcome.Verdict = VerdictNotFound
 	outcome.Note = NotePublishedSet
 	return outcome, nil

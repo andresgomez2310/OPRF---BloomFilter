@@ -10,6 +10,14 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "latency" {
+		if err := runLatencyOnly(); err != nil {
+			fmt.Fprintln(os.Stderr, "metrics:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "metrics:", err)
 		os.Exit(1)
@@ -167,6 +175,90 @@ func generateCorpus(path string, entries int) error {
 		); err != nil {
 			return err
 		}
+	}
+
+	return nil
+}
+
+func runLatencyOnly() error {
+	workDir := filepath.Join("metrics", "work")
+
+	if err := os.MkdirAll(workDir, 0755); err != nil {
+		return err
+	}
+
+	seedPath := filepath.Join(workDir, "oprf-seed.hex")
+	signingSeedPath := filepath.Join(workDir, "signing-seed.hex")
+
+	if err := os.WriteFile(
+		seedPath,
+		[]byte(strings.Repeat("11", 32)),
+		0600,
+	); err != nil {
+		return err
+	}
+
+	if err := os.WriteFile(
+		signingSeedPath,
+		[]byte(strings.Repeat("22", 32)),
+		0600,
+	); err != nil {
+		return err
+	}
+
+	// Corpus determinista para la medición de latencia.
+	const entries = 100000
+
+	corpusPath := filepath.Join(workDir, "latency-corpus.txt")
+	filterDir := filepath.Join(workDir, "latency-filter")
+
+	if err := generateCorpus(corpusPath, entries); err != nil {
+		return err
+	}
+
+	// Construimos un filtro real antes de medir.
+	// Este tiempo NO forma parte de la latencia de consulta.
+	_, err := projectmetrics.MeasureBuild(projectmetrics.BuildConfig{
+		CorpusPath:     corpusPath,
+		SeedPath:       seedPath,
+		SigningKeyPath: signingSeedPath,
+		KeyEpoch:       "metrics-latency",
+		TargetFPP:      0.01,
+		OutputDir:      filterDir,
+	})
+	if err != nil {
+		return err
+	}
+
+	results, err := projectmetrics.MeasureLatency(
+		projectmetrics.LatencyConfig{
+			SeedPath:       seedPath,
+			SigningKeyPath: signingSeedPath,
+			FilterDir:      filterDir,
+			CacheDir:       filepath.Join(workDir, "latency-cache"),
+			Samples:        30,
+			Password:       "metric-password-000000",
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("TICKET 11 - LATENCY METRICS")
+	fmt.Println()
+
+	for _, result := range results {
+		fmt.Printf(
+			"mode=%s | samples=%d | total=%.3f ms | blind=%.3f ms | network=%.3f ms | evaluation=%.3f ms | unblind=%.3f ms | bloom=%.3f ms\n",
+			result.CacheMode,
+			result.Samples,
+			float64(result.AverageTotalNS)/1e6,
+			float64(result.AverageBlindNS)/1e6,
+			float64(result.AverageNetworkNS)/1e6,
+			float64(result.AverageEvalNS)/1e6,
+			float64(result.AverageUnblindNS)/1e6,
+			float64(result.AverageLookupNS)/1e6,
+		)
 	}
 
 	return nil
