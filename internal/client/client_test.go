@@ -196,6 +196,72 @@ func TestPresentPasswordIsCompromised(t *testing.T) {
 	}
 }
 
+func TestTicket01ClientAndAdminShareCanonicalExamples(t *testing.T) {
+	const epoch = "2026-11-13T16:00:00Z"
+
+	// El Administrador construye el filtro con estas entradas.
+	// "café" y "cafe\u0301" son equivalentes después de NFC.
+	p := publish(
+		t,
+		"café\n \nPassword\n",
+		epoch,
+		1e-12,
+	)
+
+	tests := []struct {
+		name     string
+		password string
+	}{
+		{
+			name:     "NFC composed",
+			password: "café",
+		},
+		{
+			name:     "NFC decomposed",
+			password: "cafe\u0301",
+		},
+		{
+			name:     "spaces are preserved",
+			password: " ",
+		},
+		{
+			name:     "case is preserved",
+			password: "Password",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			outcome, err := client.Consult(tt.password, p.cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if outcome.Verdict != client.VerdictCompromised {
+				t.Fatalf(
+					"password %q returned %q, want %q",
+					tt.password,
+					outcome.Verdict,
+					client.VerdictCompromised,
+				)
+			}
+		})
+	}
+
+	// Comprueba además que no se convierte a minúsculas.
+	lowercase, err := client.Consult("password", p.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if lowercase.Verdict != client.VerdictNotFound {
+		t.Fatalf(
+			"lowercase password returned %q; canonicalization must preserve case",
+			lowercase.Verdict,
+		)
+	}
+}
+
 func TestAbsentPasswordIsNotInThePublishedSet(t *testing.T) {
 	const epoch = "2026-11-13T16:00:00Z"
 	p := publish(t, "clave-presente\n", epoch, 1e-12)
