@@ -494,11 +494,12 @@ func measureComponentLatency(
 	lookupDuration := time.Since(start)
 
 	divisor := int64(iterations)
+	lookupDivisor := int64(lookupIterations)
 
 	return componentLatency{
 		BlindNS:   blindDuration.Nanoseconds() / divisor,
 		EvalNS:    evaluationDuration.Nanoseconds() / divisor,
 		UnblindNS: unblindDuration.Nanoseconds() / divisor,
-		LookupNS:  lookupDuration.Nanoseconds() / divisor,
+		LookupNS:  lookupDuration.Nanoseconds() / lookupDivisor,
 	}, nil
 }

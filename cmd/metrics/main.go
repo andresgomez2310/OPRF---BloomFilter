@@ -292,7 +292,7 @@ func run() error {
 	rotationResult, err := projectmetrics.MeasureRotation(
 		projectmetrics.RotationConfig{
 			Entries:   rotationEntries,
-			TargetFPP: 0.01,
+			TargetFPP: 1e-12,
 			CorpusPath: filepath.Join(
 				workDir,
 				"rotation-corpus.txt",
@@ -501,7 +501,7 @@ func runRotationOnly() error {
 	result, err := projectmetrics.MeasureRotation(
 		projectmetrics.RotationConfig{
 			Entries:           10000,
-			TargetFPP:         0.01,
+			TargetFPP:         1e-12,
 			CorpusPath:        filepath.Join(workDir, "rotation-corpus.txt"),
 			SeedPath:          seedPath,
 			SigningKeyPath:    signingSeedPath,
