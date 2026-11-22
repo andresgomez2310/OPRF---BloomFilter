@@ -88,6 +88,66 @@ func run() error {
 			result.KHashes,
 		)
 	}
+		fmt.Println()
+	fmt.Println("TICKET 11 - FALSE POSITIVE METRICS")
+	fmt.Println()
+
+	fpConfigurations := []struct {
+		entries   int
+		targetFPP float64
+	}{
+		{100000, 0.01},
+		{100000, 0.001},
+		{1000000, 0.01},
+	}
+
+	for _, configuration := range fpConfigurations {
+		name := fmt.Sprintf(
+			"%d-%.3g",
+			configuration.entries,
+			configuration.targetFPP,
+		)
+
+		result, err := projectmetrics.MeasureFalsePositives(
+			projectmetrics.FalsePositiveConfig{
+				Entries:        configuration.entries,
+				TargetFPP:      configuration.targetFPP,
+				AbsentQueries:  10000,
+				GeneratorSeed:  20261121,
+				CorpusPath: filepath.Join(
+					workDir,
+					"false-positive-"+name+"-corpus.txt",
+				),
+				SeedPath:       seedPath,
+				SigningKeyPath: signingSeedPath,
+				OutputDir: filepath.Join(
+					workDir,
+					"false-positive-"+name,
+				),
+				CacheDir: filepath.Join(
+					workDir,
+					"false-positive-"+name+"-cache",
+				),
+			},
+		)
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf(
+			"n=%d | target=%.6f | m=%d | k=%d | absent=%d | false positives=%d | empirical=%.6f | theoretical=%.6f | present=%d/%d COMPROMETIDA\n",
+			result.Entries,
+			result.TargetFPP,
+			result.MBits,
+			result.KHashes,
+			result.AbsentQueries,
+			result.FalsePositives,
+			result.EmpiricalFPP,
+			result.TheoreticalFPP,
+			result.PresentCompromised,
+			result.PresentChecks,
+		)
+	}
 
 	return nil
 }
