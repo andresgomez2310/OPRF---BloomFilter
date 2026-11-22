@@ -1,0 +1,121 @@
+{
+  "generated_at": "2026-11-22T20:25:16.9614827Z",
+  "inputs": {
+    "generator_seed": 20261121,
+    "absent_queries_per_configuration": 10000,
+    "latency_samples_per_mode": 30,
+    "rotation_entries": 10000,
+    "oprf_seed": "1111111111111111111111111111111111111111111111111111111111111111",
+    "signing_seed": "2222222222222222222222222222222222222222222222222222222222222222"
+  },
+  "runtime": {
+    "go_version": "go1.27.4",
+    "goos": "windows",
+    "goarch": "amd64"
+  },
+  "builds": [
+    {
+      "Entries": 50000,
+      "BuildDuration": 8776609200,
+      "BloomBytes": 59907,
+      "MBits": 479253,
+      "KHashes": 7
+    },
+    {
+      "Entries": 100000,
+      "BuildDuration": 11057799200,
+      "BloomBytes": 119814,
+      "MBits": 958506,
+      "KHashes": 7
+    },
+    {
+      "Entries": 200000,
+      "BuildDuration": 23408624900,
+      "BloomBytes": 239627,
+      "MBits": 1917012,
+      "KHashes": 7
+    }
+  ],
+  "false_positives": [
+    {
+      "Entries": 100000,
+      "TargetFPP": 0.01,
+      "MBits": 958506,
+      "KHashes": 7,
+      "AbsentQueries": 10000,
+      "FalsePositives": 90,
+      "EmpiricalFPP": 0.009,
+      "TheoreticalFPP": 0.010039209581758125,
+      "PresentChecks": 5,
+      "PresentCompromised": 5
+    },
+    {
+      "Entries": 100000,
+      "TargetFPP": 0.001,
+      "MBits": 1437759,
+      "KHashes": 10,
+      "AbsentQueries": 10000,
+      "FalsePositives": 16,
+      "EmpiricalFPP": 0.0016,
+      "TheoreticalFPP": 0.0010000237549979809,
+      "PresentChecks": 5,
+      "PresentCompromised": 5
+    },
+    {
+      "Entries": 1000000,
+      "TargetFPP": 0.01,
+      "MBits": 9585058,
+      "KHashes": 7,
+      "AbsentQueries": 10000,
+      "FalsePositives": 109,
+      "EmpiricalFPP": 0.0109,
+      "TheoreticalFPP": 0.010039219536752374,
+      "PresentChecks": 5,
+      "PresentCompromised": 5
+    }
+  ],
+  "latency": [
+    {
+      "CacheMode": "uncached",
+      "Samples": 30,
+      "AverageTotalNS": 43848820,
+      "AverageHTTPNS": 34917213,
+      "AverageBlindNS": 99554,
+      "AverageNetworkNS": 34813710,
+      "AverageEvalNS": 103503,
+      "AverageUnblindNS": 137187,
+      "AverageLookupNS": 57308,
+      "HTTPCount": 120,
+      "EvalCount": 30,
+      "BlindCount": 30,
+      "UnblindCount": 30,
+      "LookupCount": 30
+    },
+    {
+      "CacheMode": "cached",
+      "Samples": 30,
+      "AverageTotalNS": 28252930,
+      "AverageHTTPNS": 26808983,
+      "AverageBlindNS": 99554,
+      "AverageNetworkNS": 26705480,
+      "AverageEvalNS": 103503,
+      "AverageUnblindNS": 137187,
+      "AverageLookupNS": 57308,
+      "HTTPCount": 90,
+      "EvalCount": 30,
+      "BlindCount": 30,
+      "UnblindCount": 30,
+      "LookupCount": 30
+    }
+  ],
+  "rotation": {
+    "Duration": 1371888500,
+    "OldEpoch": "metrics-rotation-old",
+    "NewEpoch": "2026-11-22T20:25:15Z",
+    "NewFilterReady": true,
+    "OldFilterRejected": true,
+    "OldFilterMatchedNew": false,
+    "NewVerdict": "COMPROMETIDA",
+    "PollAttempts": 44
+  }
+}

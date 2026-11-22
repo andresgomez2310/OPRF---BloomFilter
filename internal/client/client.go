@@ -1,6 +1,4 @@
-// Package client checks a password against a published Bloom filter.
-// The password, the blinding scalar and the OPRF output stay in this process.
-// The server receives only a fresh blinded element and never the server key.
+
 package client
 
 import (
