@@ -10,12 +10,22 @@ import (
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "latency" {
-		if err := runLatencyOnly(); err != nil {
-			fmt.Fprintln(os.Stderr, "metrics:", err)
-			os.Exit(1)
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "latency":
+			if err := runLatencyOnly(); err != nil {
+				fmt.Fprintln(os.Stderr, "metrics:", err)
+				os.Exit(1)
+			}
+			return
+
+		case "rotation":
+			if err := runRotationOnly(); err != nil {
+				fmt.Fprintln(os.Stderr, "metrics:", err)
+				os.Exit(1)
+			}
+			return
 		}
-		return
 	}
 
 	if err := run(); err != nil {
@@ -23,7 +33,6 @@ func main() {
 		os.Exit(1)
 	}
 }
-
 func run() error {
 	workDir := filepath.Join("metrics", "work")
 
@@ -260,6 +269,66 @@ func runLatencyOnly() error {
 			float64(result.AverageLookupNS)/1e6,
 		)
 	}
+
+	return nil
+}
+
+func runRotationOnly() error {
+	workDir := filepath.Join("metrics", "work")
+
+	if err := os.MkdirAll(workDir, 0755); err != nil {
+		return err
+	}
+
+	seedPath := filepath.Join(workDir, "oprf-seed.hex")
+	signingSeedPath := filepath.Join(workDir, "signing-seed.hex")
+
+	if err := os.WriteFile(
+		seedPath,
+		[]byte(strings.Repeat("11", 32)),
+		0600,
+	); err != nil {
+		return err
+	}
+
+	if err := os.WriteFile(
+		signingSeedPath,
+		[]byte(strings.Repeat("22", 32)),
+		0600,
+	); err != nil {
+		return err
+	}
+
+	result, err := projectmetrics.MeasureRotation(
+		projectmetrics.RotationConfig{
+			Entries:           10000,
+			TargetFPP:         0.01,
+			CorpusPath:        filepath.Join(workDir, "rotation-corpus.txt"),
+			SeedPath:          seedPath,
+			SigningKeyPath:    signingSeedPath,
+			FilterDir:         filepath.Join(workDir, "rotation-filter"),
+			RotationOutputDir: filepath.Join(workDir, "rotation-new"),
+			CacheDir:          filepath.Join(workDir, "rotation-cache"),
+			Password:          "metric-password-000000",
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("TICKET 11 - ROTATION METRICS")
+	fmt.Println()
+
+	fmt.Printf(
+		"rotation=%v | old_epoch=%s | new_epoch=%s | ready=%t | old_filter_rejected=%t | verdict=%s | attempts=%d\n",
+		result.Duration,
+		result.OldEpoch,
+		result.NewEpoch,
+		result.NewFilterReady,
+		result.OldFilterRejected,
+		result.NewVerdict,
+		result.PollAttempts,
+	)
 
 	return nil
 }
