@@ -21,6 +21,8 @@ type Config struct {
 	SeedPath  string
 	KeyInfo   []byte
 	FilterDir string
+
+	ObserveEvaluation func(time.Duration)
 }
 
 type Server struct {
@@ -154,9 +156,17 @@ func (s *Server) handleEvaluate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	evaluationStart := time.Now()
+
 	evaluated, err := oprfcore.EvaluateBlinded(key, blinded)
+
+	evaluationDuration := time.Since(evaluationStart)
+
+	if s.cfg.ObserveEvaluation != nil {
+		s.cfg.ObserveEvaluation(evaluationDuration)
+	}
+
 	if err != nil {
-		// Elemento ilegible o identidad: 400, sin registrar.
 		http.Error(w, "evaluation rejected", http.StatusBadRequest)
 		return
 	}
