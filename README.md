@@ -1,43 +1,88 @@
 # OPRF---BloomFilter
 
-Sistema de verificación privada de contraseñas comprometidas utilizando OPRF y Bloom Filter, sin revelar información sensible al servidor.
+Sistema de verificación privada de contraseñas comprometidas utilizando OPRF y Bloom Filter, sin revelar la contraseña ni un hash ordinario al servidor.
 
-## Componentes y versiones
+La demostración corre en local con Docker Compose. No hace falta un despliegue público. Las pruebas automatizadas y las métricas corren en el host con Go.
 
-| Componente     | Comando  | Directorio    | Ticket |
-| -------------- | -------- | ------------- | ------ |
-| Administrador  | `admin`  | `cmd/admin`   | 01–03, 06, 09 |
-| Servidor OPRF  | `server` | `cmd/server`  | 05     |
-| Cliente        | `cliente` | `cmd/cliente` | 04, 07, 09 |
+## Requisitos
 
-- **Go:** `1.27.4` (ver `go.mod`)
-- **Librería:** `github.com/cloudflare/circl` `v1.6.5`
+- [Docker Desktop](https://docs.docker.com/desktop/) en ejecución. En Windows, los comandos de abajo son para PowerShell.
+- Git, para clonar el repositorio.
+- [Go 1.27.4](https://go.dev/dl/) solo si vas a ejecutar `go test` o las métricas. La demostración con contenedores no lo necesita.
+
+Comprueba las herramientas antes de seguir:
+
+```powershell
+docker version
+git --version
+go version
+```
+
+`go version` debe mostrar `go1.27.4`. Si solo vas a seguir la demostración, puedes omitir esa comprobación.
+
+## Obtener el código
+
+```powershell
+git clone https://github.com/andresgomez2310/OPRF---BloomFilter.git
+cd OPRF---BloomFilter
+```
+
+Si el repositorio ya está clonado, entra en esa carpeta y continúa desde ahí. `secrets/` y `data/` no se versionan.
+
+## Versiones fijadas
+
+| Componente    | Comando   | Directorio     |
+| ------------- | --------- | -------------- |
+| Administrador | `admin`   | `cmd/admin`    |
+| Servidor OPRF | `server`  | `cmd/server`   |
+| Cliente       | `cliente` | `cmd/cliente`  |
+
+- **Go:** `1.27.4` (`go.mod` y las imágenes `golang:1.27.4-alpine`)
+- **Librería OPRF:** `github.com/cloudflare/circl` `v1.6.5` (`go.mod` y `go.sum`)
+- **Unicode NFC:** `golang.org/x/text` `v0.44.0`
 - **Suite ID:** `OPRF-ristretto255-SHA512`
-- **API:** `/v1/parameters`, `/v1/oprf/evaluate`, `/v1/filter/manifest`, `/v1/filter/bloom`
+- **Firma del manifiesto:** Ed25519
+- **Digest de `bloom.bin`:** SHA-256
+- **API:** `GET /v1/parameters`, `POST /v1/oprf/evaluate`, `GET /v1/filter/manifest`, `GET /v1/filter/bloom`
 
-## Docker Compose
+La carpeta `secrets` completa se monta solo en `admin` y `servidor`. El cliente recibe únicamente `signing-public.hex`. No recibe `skS`, la semilla de firma ni el corpus.
 
-Todos los comandos están adaptados para ejecutarse en **Windows PowerShell**. La carpeta `secrets` se monta solo en `admin` y `servidor`. La imagen y el volumen de `cliente` no reciben `skS` ni el corpus.
+## Demostración
 
-### 1. Preparar directorios en el host
+El archivo `signing-public.hex` tiene que existir antes de `docker compose up`. Docker monta esa ruta como archivo. Si todavía no existe, la convierte en un directorio y el cliente no puede leer la clave.
+
+### 1. Preparar directorios
+
 ```powershell
 New-Item -ItemType Directory -Force -Path secrets, data\filter, data\corpus
 ```
 
-### 2. Construir y levantar los servicios
+### 2. Construir las imágenes
+
 ```powershell
 docker compose build
+```
+
+### 3. Crear las claves de prueba, una sola vez
+
+```powershell
+docker compose run --rm --no-deps --entrypoint admin admin init-test-keys -dir /secrets
+```
+
+Si las claves ya existen, el comando se niega a sobrescribirlas. En ese caso pasa al paso siguiente.
+
+### 4. Levantar los tres servicios
+
+```powershell
 docker compose up -d
 ```
 
-### 3. Inicializar claves (UNA sola vez)
-```powershell
-docker compose exec admin admin init-test-keys -dir /secrets
-```
+### 5. Crear un corpus sintético y construir el filtro
 
-### 4. Crear corpus de ejemplo y construir el filtro
+Las dos contraseñas son de ejemplo. El archivo se escribe sin BOM para que la primera línea sea exactamente `hunter2`.
+
 ```powershell
-Set-Content -Path data\corpus\demo.txt -Value "hunter2", "password123" -Encoding utf8
+[System.IO.File]::WriteAllText("$PWD\data\corpus\demo.txt", "hunter2`npassword123`n")
 
 docker compose exec admin admin build-filter `
     -corpus /data/corpus/demo.txt `
@@ -47,7 +92,8 @@ docker compose exec admin admin build-filter `
     -out /tmp/filter-out
 ```
 
-### 5. Publicar el filtro para que el servidor lo lea
+### 6. Publicar el filtro
+
 ```powershell
 docker compose exec admin admin publish `
     -from /tmp/filter-out `
@@ -55,13 +101,25 @@ docker compose exec admin admin publish `
     -public-key-file /secrets/signing-public.hex
 ```
 
-### 6. Verificar los parámetros del servidor
+### 7. Comprobar la época publicada
+
 ```powershell
 curl.exe http://localhost:8080/v1/parameters
 ```
-*(Deberías ver `"key_epoch":"2026-Q1"` en la respuesta).*
 
-### 7. Rotar la clave (nueva semilla, nueva época y filtro nuevo)
+La respuesta incluye `"suite_id":"OPRF-ristretto255-SHA512"` y `"key_epoch":"2026-Q1"`.
+
+### 8. Pedir un veredicto
+
+```powershell
+"hunter2" | docker compose exec -T cliente cliente
+"no-esta-en-el-corpus" | docker compose exec -T cliente cliente
+```
+
+`hunter2` está en el corpus y responde `COMPROMETIDA`. `no-esta-en-el-corpus` responde `NO ENCONTRADA EN LA LISTA`. La contraseña se lee por stdin. El cliente envía solo el elemento cegado, descarga el filtro de la época anunciada y lo guarda en su caché.
+
+### 9. Rotar la clave y volver a consultar
+
 ```powershell
 docker compose exec admin admin rotate-key `
     -corpus /data/corpus/demo.txt `
@@ -70,17 +128,40 @@ docker compose exec admin admin rotate-key `
     -out /tmp/filter-out `
     -publish-to /data/filter `
     -public-key-file /secrets/signing-public.hex
-```
 
-### 8. Comprobar la rotación en caliente
-```powershell
 curl.exe http://localhost:8080/v1/parameters
-```
-*(El `key_epoch` ya no será `2026-Q1`, sino la fecha exacta del momento de la rotación. El servidor se actualiza sin reiniciarse).*
-
-### 9. Pedir un veredicto dentro de la red de Compose
-```powershell
 "hunter2" | docker compose exec -T cliente cliente
-"no-esta-en-el-corpus" | docker compose exec -T cliente cliente
 ```
-La primera contraseña está en el corpus y responde `COMPROMETIDA`. La segunda no está y responde `NO ENCONTRADA EN LA LISTA`. El cliente descarga el filtro de la época anunciada en `/v1/parameters` y lo guarda en su caché. Si `rotate-key` publica otra época, la siguiente consulta descarta ese filtro y baja el nuevo antes de responder.
+
+`key_epoch` deja de ser `2026-Q1` y pasa a ser la hora UTC de la rotación. El servidor toma la semilla nueva sin reiniciarse. La consulta siguiente descarta el filtro cacheado, descarga el de la época nueva y vuelve a responder `COMPROMETIDA`.
+
+Para parar los contenedores:
+
+```powershell
+docker compose down
+```
+
+## Pruebas automatizadas
+
+Hacen falta Go `1.27.4` y el directorio del repositorio. No hace falta tener los contenedores en marcha: las pruebas levantan el servidor en el proceso de test.
+
+```powershell
+go test ./... -count=1
+```
+
+La batería incluye consultas presentes y ausentes, cegado fresco, vectores de RFC 9497, elementos mal formados, el elemento identidad, una época distinta, y manifiesto, firma o `bloom.bin` alterados. `build-filter` se comprueba con corpus de 3, 1.000 y 100.000 entradas.
+
+## Métricas
+
+También corren en el host, con datos sintéticos. La ejecución completa mide construcción (50.000, 100.000 y 200.000 entradas), falsos positivos (10.000 consultas ausentes por configuración), latencia con caché y sin caché, y rotación de clave. Puede tardar varios minutos.
+
+```powershell
+go run ./cmd/metrics
+```
+
+Escribe `metrics/report.md` y `metrics/results.json`. Para repetir solo una parte:
+
+```powershell
+go run ./cmd/metrics latency
+go run ./cmd/metrics rotation
+```

@@ -46,8 +46,11 @@ services:
     environment:
       - SERVER_URL=http://servidor:8080
       - CACHE_DIR=/var/cache/cliente
+      - SIGNING_PUBLIC_FILE=/etc/oprf/signing-public.hex
     volumes:
       - cliente-cache:/var/cache/cliente
+      # Solo la clave pública. skS y la semilla de firma no entran en este servicio.
+      - ./secrets/signing-public.hex:/etc/oprf/signing-public.hex:ro
     command: ["sleep", "infinity"]
     restart: unless-stopped
 
