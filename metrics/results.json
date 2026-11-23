@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-22T21:58:33.3456035Z",
+  "generated_at": "2026-11-23T01:27:38.9609331Z",
   "inputs": {
     "generator_seed": 20261121,
     "absent_queries_per_configuration": 10000,
@@ -16,21 +16,21 @@
   "builds": [
     {
       "Entries": 50000,
-      "BuildDuration": 4005474200,
+      "BuildDuration": 2791866500,
       "BloomBytes": 59907,
       "MBits": 479253,
       "KHashes": 7
     },
     {
       "Entries": 100000,
-      "BuildDuration": 5238711900,
+      "BuildDuration": 6011491400,
       "BloomBytes": 119814,
       "MBits": 958506,
       "KHashes": 7
     },
     {
       "Entries": 200000,
-      "BuildDuration": 10383747100,
+      "BuildDuration": 11331274900,
       "BloomBytes": 239627,
       "MBits": 1917012,
       "KHashes": 7
@@ -78,13 +78,13 @@
     {
       "CacheMode": "uncached",
       "Samples": 30,
-      "AverageTotalNS": 53429480,
-      "AverageHTTPNS": 46415910,
-      "AverageBlindNS": 137789,
-      "AverageNetworkNS": 46317566,
-      "AverageEvalNS": 98344,
-      "AverageUnblindNS": 145643,
-      "AverageLookupNS": 95,
+      "AverageTotalNS": 5808406,
+      "AverageHTTPNS": 2066553,
+      "AverageBlindNS": 91685,
+      "AverageNetworkNS": 2010859,
+      "AverageEvalNS": 55694,
+      "AverageUnblindNS": 93434,
+      "AverageLookupNS": 62,
       "HTTPCount": 120,
       "EvalCount": 30,
       "BlindCount": 30,
@@ -94,13 +94,13 @@
     {
       "CacheMode": "cached",
       "Samples": 30,
-      "AverageTotalNS": 29202453,
-      "AverageHTTPNS": 27936253,
-      "AverageBlindNS": 137789,
-      "AverageNetworkNS": 27837909,
-      "AverageEvalNS": 98344,
-      "AverageUnblindNS": 145643,
-      "AverageLookupNS": 95,
+      "AverageTotalNS": 3251193,
+      "AverageHTTPNS": 2954250,
+      "AverageBlindNS": 91685,
+      "AverageNetworkNS": 2898556,
+      "AverageEvalNS": 55694,
+      "AverageUnblindNS": 93434,
+      "AverageLookupNS": 62,
       "HTTPCount": 90,
       "EvalCount": 30,
       "BlindCount": 30,
@@ -109,13 +109,13 @@
     }
   ],
   "rotation": {
-    "Duration": 1407620800,
+    "Duration": 894250000,
     "OldEpoch": "metrics-rotation-old",
-    "NewEpoch": "2026-11-22T21:58:31Z",
+    "NewEpoch": "2026-11-23T01:27:38Z",
     "NewFilterReady": true,
     "OldFilterRejected": true,
     "OldFilterMatchedNew": false,
     "NewVerdict": "COMPROMETIDA",
-    "PollAttempts": 24
+    "PollAttempts": 110
   }
 }

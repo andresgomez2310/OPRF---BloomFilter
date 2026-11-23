@@ -2,7 +2,7 @@
 
 ## Reproducibilidad
 
-- Generado: `2026-11-22T21:58:33Z`
+- Generado: `2026-11-23T01:27:38Z`
 - Go: `go1.27.4`
 - Plataforma: `windows/amd64`
 - Semilla del generador de consultas ausentes: `20261121`
@@ -27,9 +27,9 @@ go test ./... -count=1
 
 | Entradas | Tiempo de build | bloom.bin | m bits | k |
 |---:|---:|---:|---:|---:|
-| 50000 | 4.0054742s | 59907 bytes | 479253 | 7 |
-| 100000 | 5.2387119s | 119814 bytes | 958506 | 7 |
-| 200000 | 10.3837471s | 239627 bytes | 1917012 | 7 |
+| 50000 | 2.7918665s | 59907 bytes | 479253 | 7 |
+| 100000 | 6.0114914s | 119814 bytes | 958506 | 7 |
+| 200000 | 11.3312749s | 239627 bytes | 1917012 | 7 |
 
 ## Falsos positivos
 
@@ -45,18 +45,18 @@ Los valores son promedios por consulta. `network` corresponde al tiempo HTTP des
 
 | Modo | Muestras | Total | Blind | Network | Evaluación | Unblind | Bloom lookup |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| uncached | 30 | 53.429 ms | 0.138 ms | 46.318 ms | 0.098 ms | 0.146 ms | 0.095 µs |
-| cached | 30 | 29.202 ms | 0.138 ms | 27.838 ms | 0.098 ms | 0.146 ms | 0.095 µs |
+| uncached | 30 | 5.808 ms | 0.092 ms | 2.011 ms | 0.056 ms | 0.093 ms | 0.062 µs |
+| cached | 30 | 3.251 ms | 0.092 ms | 2.899 ms | 0.056 ms | 0.093 ms | 0.062 µs |
 
 ## Rotación de clave y filtro
 
-- Tiempo hasta disponer del nuevo filtro: `1.4076208s`
+- Tiempo hasta disponer del nuevo filtro: `894.25ms`
 - Época anterior: `metrics-rotation-old`
-- Nueva época: `2026-11-22T21:58:31Z`
+- Nueva época: `2026-11-23T01:27:38Z`
 - Nuevo filtro disponible: `true`
 - Filtro anterior rechazado para la nueva salida: `true`
 - Veredicto con la nueva época: `COMPROMETIDA`
-- Intentos hasta observar la nueva época: `24`
+- Intentos hasta observar la nueva época: `110`
 
 ## Criterios de aceptación
 
